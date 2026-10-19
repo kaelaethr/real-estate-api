@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+
+# Generated Prisma client (rebuilt by `npx prisma generate`)
+src/generated/
+
+# Secrets: never commit the real .env
+.env
+.env.*
+!.env.example
+
+# Database dumps contain personal data
+*.dump
+*.sql.gz
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.log
+*.tsbuildinfo

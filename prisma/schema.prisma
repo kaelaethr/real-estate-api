@@ -1,0 +1,240 @@
+// Prisma schema para sa real estate listing API (10 ka tables, 3NF)
+// Ang CHECK constraints idugang sa migration SQL kay dili kini ma-express diri
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Mga enum ----------
+
+enum Role {
+  CONSUMER
+  PROFESSIONAL
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ListingType {
+  SALE
+  RENT
+}
+
+enum PropertyType {
+  HOUSE
+  CONDO
+  APARTMENT
+  LOT
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  REJECTED
+  INACTIVE
+  SOLD
+  RENTED
+}
+
+enum InquiryStatus {
+  NEW
+  READ
+  RESPONDED
+  CLOSED
+}
+
+// ---------- Mga account ----------
+
+model User {
+  id            Int           @id @default(autoincrement())
+  fullName      String        @map("full_name") @db.VarChar(100)
+  // gamay nga letra ang email sa dili pa i-save
+  email         String        @unique @db.VarChar(150)
+  // bcrypt hash; ayaw gyud i-return sa API
+  passwordHash  String        @map("password_hash") @db.VarChar(255)
+  role          Role          @default(CONSUMER)
+  accountStatus AccountStatus @default(ACTIVE) @map("account_status")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  professionalProfile ProfessionalProfile?
+  favorites           Favorite[]
+  inquiries           Inquiry[]
+
+  @@map("users")
+}
+
+model ProfessionalProfile {
+  id                 Int                @id @default(autoincrement())
+  userId             Int                @unique @map("user_id")
+  agencyName         String?            @map("agency_name") @db.VarChar(100)
+  phone              String             @db.VarChar(20)
+  // PRC license o accreditation number nga susihon sa admin
+  licenseNumber      String?            @unique @map("license_number") @db.VarChar(100)
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  rejectionReason    String?            @map("rejection_reason")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  properties Property[]
+
+  @@map("professional_profiles")
+}
+
+// ---------- Lokasyon (PSGC, read-only nga reference data) ----------
+
+model Region {
+  id        Int        @id @default(autoincrement())
+  psgcCode  String     @unique @map("psgc_code") @db.VarChar(10)
+  name      String     @unique @db.VarChar(100)
+  provinces Province[]
+
+  @@map("regions")
+}
+
+model Province {
+  id       Int    @id @default(autoincrement())
+  regionId Int    @map("region_id")
+  psgcCode String @unique @map("psgc_code") @db.VarChar(10)
+  name     String @db.VarChar(100)
+
+  region Region             @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  cities CityMunicipality[]
+
+  @@unique([regionId, name])
+  @@index([regionId])
+  @@map("provinces")
+}
+
+model CityMunicipality {
+  id         Int    @id @default(autoincrement())
+  provinceId Int    @map("province_id")
+  psgcCode   String @unique @map("psgc_code") @db.VarChar(10)
+  name       String @db.VarChar(100)
+
+  province  Province   @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  barangays Barangay[]
+
+  @@unique([provinceId, name])
+  @@index([provinceId])
+  @@map("cities_municipalities")
+}
+
+model Barangay {
+  id                 Int    @id @default(autoincrement())
+  cityMunicipalityId Int    @map("city_municipality_id")
+  psgcCode           String @unique @map("psgc_code") @db.VarChar(10)
+  name               String @db.VarChar(100)
+
+  cityMunicipality CityMunicipality @relation(fields: [cityMunicipalityId], references: [id], onDelete: Restrict)
+  properties       Property[]
+
+  @@unique([cityMunicipalityId, name])
+  @@index([cityMunicipalityId])
+  @@map("barangays")
+}
+
+// ---------- Mga listing ----------
+
+model Property {
+  id              Int           @id @default(autoincrement())
+  professionalId  Int           @map("professional_id")
+  barangayId      Int           @map("barangay_id")
+  title           String        @db.VarChar(100)
+  description     String
+  listingType     ListingType   @map("listing_type")
+  propertyType    PropertyType  @map("property_type")
+  // presyo sa pagbaligya, o binuwan nga abang kung RENT (PHP)
+  price           Decimal       @db.Decimal(14, 2)
+  floorArea       Decimal?      @map("floor_area") @db.Decimal(10, 2)
+  lotArea         Decimal?      @map("lot_area") @db.Decimal(10, 2)
+  bedrooms        Int?          @db.SmallInt
+  bathrooms       Int?          @db.SmallInt
+  addressLine     String?       @map("address_line") @db.VarChar(150)
+  // gitagana para sa map view sa umaabot
+  latitude        Decimal?      @db.Decimal(9, 6)
+  longitude       Decimal?      @db.Decimal(9, 6)
+  listingStatus   ListingStatus @default(DRAFT) @map("listing_status")
+  rejectionReason String?       @map("rejection_reason")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Restrict)
+  barangay     Barangay            @relation(fields: [barangayId], references: [id], onDelete: Restrict)
+  images       PropertyImage[]
+  favorites    Favorite[]
+  inquiries    Inquiry[]
+
+  @@index([professionalId])
+  @@index([barangayId])
+  // para paspas ang search ug pagination
+  @@index([listingStatus, listingType, propertyType, price])
+  @@map("properties")
+}
+
+model PropertyImage {
+  id           Int      @id @default(autoincrement())
+  propertyId   Int      @map("property_id")
+  // URL ra ang i-save, dili ang file mismo
+  imageUrl     String   @map("image_url") @db.VarChar(300)
+  // ang pinakagamay nga numero mao ang cover image
+  displayOrder Int      @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, displayOrder])
+  @@map("property_images")
+}
+
+// ---------- Mga aksyon sa consumer ----------
+
+model Favorite {
+  userId     Int      @map("user_id")
+  propertyId Int      @map("property_id")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  // composite key: dili ma-save ang parehas nga listing kaduha
+  @@id([userId, propertyId])
+  @@index([propertyId])
+  @@map("favorites")
+}
+
+model Inquiry {
+  id            Int           @id @default(autoincrement())
+  userId        Int           @map("user_id")
+  // ang propesyonal makuha pinaagi sa property, dili na i-store diri
+  propertyId    Int           @map("property_id")
+  message       String
+  inquiryStatus InquiryStatus @default(NEW) @map("inquiry_status")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([propertyId, inquiryStatus])
+  @@map("inquiries")
+}
